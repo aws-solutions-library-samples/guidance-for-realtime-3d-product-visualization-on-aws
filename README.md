@@ -175,7 +175,7 @@ Follow these steps from a terminal to deploy the Guidance to your AWS account:
 
 5. **Configure AWS deployment settings**
    
-   Edit the configuration file `config/.env` and update the following values for the `main` stage:
+   Edit the configuration file `amazon-gamelift-streams/config/.env` and update the following values for the `main` stage:
    
    ```bash
    # AWS CLI profile name (must exist in ~/.aws/credentials)
