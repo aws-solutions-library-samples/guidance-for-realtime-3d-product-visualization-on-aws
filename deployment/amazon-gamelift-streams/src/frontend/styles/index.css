@@ -1,0 +1,16 @@
+/* @license
+*  Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+*  SPDX-License-Identifier: MIT-0
+*/
+
+/* 
+This file is responsible for defining what non-NPM vendor and application styles get bundled into a file we reference in our HTML. 
+The vender dependencies below couldn't be installed via NPM, so we had to manually download them and include in this source code. 
+See the <pvagls-src>/makefile for how to get NPM-vended styles copied into another file we reference in our HTML.
+*/
+/*@import './vendor/your-dep.css';*/
+
+@import './app.css';
+@import './local-captchas.css'; /* TODO limit to local */
+@import './status-display.css';
+@import './page.index.css';

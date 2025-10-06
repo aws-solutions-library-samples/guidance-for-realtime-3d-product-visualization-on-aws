@@ -1,0 +1,60 @@
+# This Dockerfile is responsible for defining a container-based environment to use for building the placeholder application.
+# syntax=docker/dockerfile:1
+ARG EXTEND="public.ecr.aws/ubuntu/ubuntu:22.04_stable"
+FROM ${EXTEND}
+
+SHELL ["/bin/bash", "-c"]
+
+ENV DEBIAN_FRONTEND=noninteractive
+ENV USERNAME=root
+
+RUN mkdir -p /opt/app # Source code added here.
+ADD ./ /opt/app/
+
+RUN rm -rf /opt/app/target
+
+RUN apt-get update -y && \
+  apt-get install -y \
+  build-essential \
+  software-properties-common && \
+  apt-get update -y
+
+RUN \
+  pack_build=" \
+    apt-transport-https \
+    automake \
+    autotools-dev \
+    bsdmainutils \
+    ca-certificates \
+    curl \
+    gcc-11 g++-11 \
+    git \
+    gnupg \
+    gnupg-agent \
+    gnupg2 \
+    libssl-dev \
+    make \
+    nano \
+    pkg-config \
+    tar \
+    unzip \
+    wget " \
+  && apt-get update -y \
+  && apt install -y --no-install-recommends -o APT::Immediate-Configure=0 $pack_build
+
+RUN update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-11 11 --slave /usr/bin/g++ g++ /usr/bin/g++-11
+
+RUN curl https://sh.rustup.rs -sSf | bash -s -- -y
+ENV PATH="/root/.cargo/bin:${PATH}"
+RUN cargo --help
+
+RUN cd /opt/app && make setup
+
+RUN apt-get clean \
+  && rm /var/lib/apt/lists/* \
+  /usr/share/doc/* \
+  /usr/share/locale/* \
+  /usr/share/man/* \
+  /usr/share/info/* -fR
+
+ENTRYPOINT ["/opt/app/build-utils/docker/dockerfile.app-builder.entrypoint.sh"]

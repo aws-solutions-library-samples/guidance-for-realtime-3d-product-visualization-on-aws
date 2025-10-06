@@ -1,0 +1,53 @@
+{
+  "@comment": "This file was generated from .npm/npm*.ts files.",
+  "dependencies": {
+    "normalize.css": "8.0.1",
+    "ts-bus": "2.3.1",
+    "localstorage-slim": "2.5.0",
+    "aws-sdk": "2.1692.0",
+    "ts-app-logger": "github:tsapporg/ts-app-logger#d41dad54c5ad91ca91d22c5467343f194b8d7334",
+    "dotenv": "16.4.5"
+  },
+  "devDependencies": {
+    "license-checker-rseidelsohn": "4.3.0",
+    "repolinter": "github:todogroup/repolinter#main",
+    "license-report": "6.5.0",
+    "source-licenser": "2.0.6",
+    "shx": "0.3.4",
+    "cross-env": "5.2.1",
+    "concurrently": "7.5.0",
+    "onchange": "7.1.0",
+    "wait-on": "7.2.0",
+    "rimraf": "5.0.5",
+    "ts-command-line-args": "2.5.1",
+    "@aws-sdk/client-gameliftstreams": "3.835.0",
+    "stream-browserify": "3.0.0",
+    "crypto-browserify": "3.12.0",
+    "os-browserify": "0.3.0",
+    "path-browserify": "1.0.1",
+    "ejs": "3.1.10",
+    "dotenv-to-json": "0.1.0",
+    "clean-css-cli": "5.6.1",
+    "esbuild": "0.19.2",
+    "local-web-server": "5.4.0",
+    "aws-cdk-lib": "2.202.0",
+    "aws-cdk": "2.1019.2",
+    "cdk-nag": "2.36.26",
+    "constructs": "10.1.196",
+    "source-map-support": "0.5.21",
+    "@types/aws-lambda": "8.10.125",
+    "typescript": "5.2.2",
+    "@types/node": "20.10.0",
+    "ts-node": "10.9.2",
+    "tsx": "4.19.1",
+    "tslib": "2.4.0"
+  },
+  "name": "pvagls",
+  "version": "0.0.1",
+  "private": false,
+  "type": "module",
+  "engines": {
+    "node": ">=20.0.0 <=20.19.3"
+  },
+  "license": "MIT-0"
+}

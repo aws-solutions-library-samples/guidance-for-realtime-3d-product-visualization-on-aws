@@ -1,0 +1,49 @@
+# This file is responsible for citing referenced work and/or software used that is not an NPM package declared in a dependency file.
+# Not all of the software below is an application dependency, it's just relied upon to build, develop, or deploy the sample.
+# References:
+# * https://citation-file-format.github.io/
+# * https://github.com/citation-file-format/citation-file-format/blob/main/schema-guide.md#referencing-other-work
+# * https://github.com/citation-file-format/citation-file-format/blob/main/schema-guide.md#definitionsreferencetype
+# * https://github.com/citation-file-format/citation-file-format/blob/main/schema-guide.md#definitionsreferenceurl
+# * https://spdx.org/licenses/
+cff-version: 1.2.0
+title: "3d-product-visualization-amazon-gamelift-streams"
+message: "When I wrote this code, only God and I understood what I did. Now only God knows."
+references:
+  # Dev software:
+  - type: software
+    title: "GNU Make"
+    license: GPL-3.0-only
+    url: "https://www.gnu.org/software/make"
+  - type: software
+    title: "Node.js"
+    license: MIT
+    url: "https://nodejs.org" 
+  - type: software
+    title: "unzip"
+    license: Info-ZIP
+    url: "http://www.info-zip.org/" 
+  - type: software
+    title: "curl"
+    license: curl
+    url: "https://curl.se" 
+  - type: software
+    title: "jq"
+    license: MIT 
+    url: "https://jqlang.github.io/jq" 
+  - type: software
+    title: "AWS CLI"
+    license: Apache-2.0 
+    url: "https://github.com/aws/aws-cli"
+
+  # Declared here because they're installed globally via NPM.
+  - type: software
+    title: "github:tsapporg/ts-npm#f1f6e4c6cead9ae5f8877f25da5ff85382079c5c"
+    license: MIT
+    url: "https://github.com/tsapporg/ts-npm/tree/aws-sample"
+
+  # Declared here because they're manually downloaded.
+  - type: software
+    title: "Amazon GameLift Streams Web SDK"
+    license: See LICENSE.txt file in src/frontend/scripts/AmazonGameLiftStreamsWebSDK-v1.0.0/
+    url: "https://gameliftstreams-public-website-assets.s3.us-west-2.amazonaws.com/AmazonGameLiftStreamsWebSDK-v1.0.0.zip"

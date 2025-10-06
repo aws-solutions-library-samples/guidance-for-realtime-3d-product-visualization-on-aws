@@ -1,0 +1,15 @@
+{
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "outDir": "../dist.edge",
+    "rootDir": "../src",
+    "types": [
+      "node"
+    ], 
+  },
+  "include": [
+    "../src/@types/*.ts",
+    "../src/common/**/*.ts",
+    "../src/edge/**/*.ts"
+  ]
+}

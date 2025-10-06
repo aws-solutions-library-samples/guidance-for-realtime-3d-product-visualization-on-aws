@@ -1,0 +1,41 @@
+# @license
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+#
+# This file is responsible for defining Docker related developer commands.
+include makefile.inc
+
+# Include environment configuration.
+ifneq (,$(wildcard ./config/.env))
+	include ./config/.env
+	export
+endif
+
+base_image := public.ecr.aws/ubuntu/ubuntu:22.04_stable
+appbuilder_image_name := aws-sample-appbuilder
+
+# On MacOS (Apple M3) - required.
+platform_flag := --platform linux/amd64
+
+build/app-builder:
+# We use the .gitignore file as a common "dockerignore" file.
+# This occasionaly bites us, but more pros than cons.
+	cp .gitignore ./build-utils/docker/dockerfile.app-builder.dockerignore
+
+	DOCKER_BUILDKIT=1 docker build -f ./build-utils/docker/dockerfile.app-builder --progress=plain $(platform_flag) \
+		--build-arg EXTEND="$(base_image)" -t "$(appbuilder_image_name):latest" . &> ./build-utils/logs/docker.build.app-builder.log
+
+run/app-builder:
+	docker run -i --rm $(platform_flag) \
+		-v $(shell pwd)/:/opt/app/:rw \
+		--privileged \
+		-e GENERATE_UNIQUE=false \
+		"$(appbuilder_image_name):latest"
+
+docker/shell:
+	docker run -it --rm $(platform_flag) \
+		-v $(shell pwd)/:/opt/app/:rw \
+		--privileged \
+		-e GENERATE_UNIQUE=false \
+		--entrypoint /bin/bash \
+		"$(appbuilder_image_name):latest"

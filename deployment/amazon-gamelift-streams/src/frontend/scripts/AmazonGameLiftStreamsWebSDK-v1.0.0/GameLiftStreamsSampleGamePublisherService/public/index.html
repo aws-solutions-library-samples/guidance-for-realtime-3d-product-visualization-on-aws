@@ -1,0 +1,559 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="robots" content="noindex, nofollow">
+
+    <title>Stream Demo</title>
+
+    <!-- The following CSS style rules are critical for proper behavior -->
+    <style>    
+        /*
+          When the stream is fullscreen, we must position an invisible overlay <div>
+          with some whitespace content above the video and make it invisible to mouse
+          events. If we don't place this overlay, the mouse cursor will automatically
+          hide because the browser thinks the user is watching a full-screen video.
+        */
+        #streamFullscreenContainer:not(:fullscreen) > #streamFullscreenOverlay {
+            display: none;
+        }
+        #streamFullscreenContainer:fullscreen > #streamFullscreenOverlay {
+            position: absolute;
+            left: 0;
+            top: 0;
+            right: 0;
+            bottom: 0;
+            z-index: 100;
+            pointer-events: none;
+        }
+
+        /* Scale video up to match container in fullscreen mode */
+        #streamFullscreenContainer:fullscreen > #streamVideoElement {
+            width: 100%;
+            height: 100%;
+        }
+
+        /* Prevent Safari from drawing media controls over stream */
+        #streamVideoElement::-webkit-media-controls {
+            display: none !important;
+        }
+    </style>
+
+    <!-- Import GameLiftStreams universal library as window.myGameLiftStreams. Can also be imported
+      -- as a TypeScript, CommonJS, or AMD module for use with browserify or webpack. -->
+    <script type="text/javascript" src="gameliftstreams-1.0.0.js"></script>
+    
+    <!-- Optional helper functionality that converts touch events to mouse events -->
+    <script type="text/javascript" src="touchtomouse.js"></script>
+
+    <!-- Uninteresting utility helpers for settting/getting cookies, query params, etc -->
+    <script type="text/javascript" src="utils.js"></script>
+
+    <!-- Sample animation to be played while the service is connecting -->
+    <script type="text/javascript" src="loadingscreen.js"></script>
+
+    <!-- Application logic -->
+    <script type="text/javascript">
+
+        // Helper to post JSON body and parse 2xx JSON responses, or throw an error
+        async function doPost(url, params) {
+            const response = await fetch(url, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(params),
+            });
+            if (response.status < 200 || response.status >= 300) {
+                throw new Error(`POST ${url} returned non-2xx status code ${response.status}`);
+            }
+            return response.json();
+        }
+
+        function streamConnectionStateCallback(state) {
+            console.log('Connection state: ' + state);
+            if (state === 'disconnected') {
+                appDisconnect();
+            }
+        }
+
+        function streamChannelErrorCallback(error) {
+            console.log('WebRTC internal connection error: ' + error);
+            appDisconnect();
+        }
+
+        function streamServerDisconnectCallback(reasoncode) {
+            console.log('Server disconnected with reason: ' + reasoncode);
+            if (reasoncode === 'terminated') {
+                // Stream session has ended, disable all reconnection UI
+                deleteAllQueryParams();
+                appShowReconnectLinks(false);
+            }
+            // The connection state will transition to 'disconnected' within 5 seconds,
+            // but there is no reason to wait. The client can disconnect immediately.
+            appDisconnect();
+        }
+
+        function streamApplicationMessageCallback(message) {
+            console.log('Received ' + message.length + ' bytes of message from Application');
+        }
+
+        function appInit() {
+            if (window.myGameLiftStreams) {
+                throw new Error("appInit should only be called once");
+            }
+
+            // When in fullscreen, try using Keyboard Lock API to capture all keys including
+            // browser special keys, and to prevent escape key from exiting fullscreen on a
+            // quick tap (note: only Chrome implements press-and-hold escape key handling)
+            if ('keyboard' in navigator && 'lock' in navigator.keyboard) {
+                document.addEventListener('fullscreenchange', () => {
+                    if (document.fullscreenElement) {
+                        navigator.keyboard.lock();
+                    }
+                });
+            }
+
+            gameliftstreams.setLogLevel('debug'); // note: defaults to 'none'
+
+            window.myGameLiftStreams = new gameliftstreams.GameLiftStreams({
+                videoElement: document.getElementById('streamVideoElement'),
+                audioElement: document.getElementById('streamAudioElement'),
+                inputConfiguration: {
+                    autoMouse: true,
+                    autoKeyboard: true,
+                    autoGamepad: true,
+                    hapticFeedback: true,
+                    setCursor: 'visibility',
+                    autoPointerLock: 'fullscreen',
+                },
+                clientConnection: {
+                    connectionState: streamConnectionStateCallback,
+                    channelError: streamChannelErrorCallback,
+                    serverDisconnect: streamServerDisconnectCallback,
+                    applicationMessage: streamApplicationMessageCallback,
+                }
+            });
+
+            // For touchscreen support, convert inputs to mouse events (optional)
+            RegisterTouchToMouse(document.getElementById('streamVideoElement'));
+
+            //
+            // DEVELOPER NOTE: for more explicit input control that is completely API-driven,
+            // you can disable automatic device handling in the inputConfiguration structure:
+            //  {
+            //      autoMouse: false,
+            //      autoKeyboard: false,
+            //      autoGamepad: true,
+            //      ...
+            //  }
+            //
+            // Input events can then be injected from your existing event handlers as follows:
+            //
+            // function myKeyDownHandler(event) { event.preventDefault(); myGameLiftStreams.processKeyboardEvent(event); }
+            // function myKeyUpHandler(event) { event.preventDefault(); myGameLiftStreams.processKeyboardEvent(event); }
+            // function myMouseMoveHandler(event) { event.preventDefault(); myGameLiftStreams.processMouseEvent(event); }
+            // function myMouseDownHandler(event) { event.preventDefault(); myGameLiftStreams.processMouseEvent(event); }
+            // function myMouseUpHandler(event) { event.preventDefault(); myGameLiftStreams.processMouseEvent(event); }
+            // function myWheelHandler(event) { event.preventDefault(); myGameLiftStreams.processMouseEvent(event); }
+            // 
+            // These APIs can also process your own custom KeyboardEvent, MouseEvent, and WheelEvent-like objects.
+            // This can be useful when building test harnesses, or when building complex web applications which
+            // natively handle user input and only transmits simple keystroke commands to the streamed application.
+            //
+            // It is recommended that you leave autoGamepad set to 'true', but if you set it to 'false',
+            // you can manually register individual gamepads and poll them for updates:
+            //
+            // navigator.getGamepads().forEach( it => { if (it && it.connected) myGameLiftStreams.addGamepad(it); } );
+            // function myAnimationTickHandlerOr60FPSIntervalTimer() { myGameLiftStreams.processGamepads(); }
+            //
+            // You can also use these APIs to drive 'fake' gamepads by registering your own Gamepad-like objects.
+            // Each 'fake' gamepad must have a unique index property of at least 100, to avoid colliding with the
+            // indexes of any real gamepads, and should contain 17 buttons and 4 axes with a 'standard' mapping
+            // as defined in the W3C Gamepad specification at https://w3c.github.io/gamepad/#remapping. Registered
+            // Gamepad-like objects will be scanned for button and axis property changes during processGamepads().
+            //
+
+
+            // For convenience, restore saved stream group id, user id, and advanced settings from cookies
+            restoreFromCookieIfSet('setupApplicationId', 'savedApplicationId');
+            restoreFromCookieIfSet('setupStreamGroupId', 'savedStreamGroupId');
+            restoreFromCookieIfSet('setupLocations', 'savedLocations');
+            restoreFromCookieIfSet('setupUserId', 'savedUserId');
+            restoreFromCookieIfSet('setupArgs', 'savedArgs');
+            restoreFromCookieIfSet('setupEnv', 'savedEnv');
+
+            // Reconnect to stored session in query params, if set, else go to setup screen
+            if (getQueryParams().get('token')) {
+                appShowReconnectLinks(true);
+                appShowPanel('appReconnect');
+            } else {
+                appShowReconnectLinks(false);
+                appShowPanel('appSetup');
+            }
+
+            // Set up nice formatting of command line arguments and environment variables text areas
+            let cmdLineArgsInput = document.getElementById("setupArgs");
+            cmdLineArgsInput.addEventListener('paste', function() {
+                let element = this;
+                let original = element.value;
+                pastePrettyJson(element, original);
+            }, false);
+            cmdLineArgsInput.addEventListener('input', autoResize, false);
+
+            let envVarsInput = document.getElementById("setupEnv");
+            envVarsInput.addEventListener('paste', function() {
+                let element = this;
+                let original = element.value;
+                pastePrettyJson(element, original);
+            }, false);
+            envVarsInput.addEventListener('input', autoResize, false);
+        }
+        
+        async function appEnableMic() {
+            if (window.myMicEnabling || window.myMicEnabled) {
+                return;
+            }
+
+            window.myMicEnabling = true;
+            try {
+                await window.myGameLiftStreams.enableMicrophone();
+                window.myMicEnabled = true;
+            } catch (e) {
+                // Handle DOMException, prompt user if microphone is necessary
+            } finally {
+                window.myMicEnabling = false;
+            }
+
+            if (window.myMicEnabled) {
+                document.getElementById('setupMicCheck').innerHTML = 'ENABLED';
+                document.getElementById('setupEnableMic').style.display = 'none';
+            }
+        }
+        
+        function appValidateSetup() {
+            const getValue = (id) => document.getElementById(id).value;
+            const checkString = (x) => { if (typeof(x) !== 'string') throw new Error(); return 1; };
+            const err = (() => {
+                if (!getValue('setupUserId').match(/^[-a-zA-Z0-9]{1,100}$/)) {
+                    return 'Invalid User ID - must be between 1 and 100 alphanumeric characters or hyphens';
+                }
+                if (!getValue('setupStreamGroupId').match(/^(arn:.+[/])?sg-[a-zA-Z0-9]{5,}$/)) {
+                    return 'Invalid Stream Group ID - check the GameLiftStreams console for valid Stream Group IDs';
+                }
+                try {
+                    JSON.parse(getValue('setupLocations') || '[]').forEach(checkString);
+                } catch {
+                    return 'Invalid JSON list for Locations - example: ["us-east-2", "ap-northeast-1"]';
+                }
+                if (getValue('setupApplicationId') !== "" && !getValue('setupApplicationId').match(/^(arn:.+[/])?a-[a-zA-Z0-9]{4,}$/)) {
+                    return 'Invalid Application ID - check the GameLiftStreams console for valid Application IDs';
+                }
+                try {
+                    JSON.parse(getValue('setupArgs') || '[]').forEach(checkString);
+                } catch {
+                    return 'Invalid JSON list for Command-Line Arguments - example: ["-flag1", "-flag2", "Arg3", "file.dat"]';
+                }
+                try {
+                    Object.entries(JSON.parse(getValue('setupEnv') || '{}')).forEach(([k,v]) => checkString(k) && checkString(v));
+                } catch {
+                    return 'Invalid JSON object for Environment Variables - example: {"CONFIG": "1", "EXTRACONFIG": "yes"}';
+                }
+                return '';
+            })();
+            document.getElementById('setupValidationError').innerHTML = err;
+
+            // For convenience, remember current settings as cookies for future page reloads
+            setCookie('savedApplicationId', getValue('setupApplicationId'));
+            setCookie('savedStreamGroupId', getValue('setupStreamGroupId'));
+            setCookie('savedLocations', getValue('setupLocations'));
+            setCookie('savedUserId', getValue('setupUserId'));
+            setCookie('savedArgs', getValue('setupArgs'));
+            setCookie('savedEnv', getValue('setupEnv'));
+
+            return err.length == 0;
+        }
+
+        async function appStartStreaming() {
+            try {
+                // IMPORTANT: WebKit-based browsers (including all iOS browsers) require
+                // audio to play immediately in response to the initial mouse click, or
+                // else the browser will block the stream from auto-playing later when
+                // the asynchronous stream connection process is complete. Another valid
+                // workaround would be to play a "Connecting..." video, as long as the
+                // video also has an audio track - even a silent audio track will do.
+                if (navigator.userAgent.indexOf(' AppleWebKit/') != -1 &&
+                        navigator.userAgent.indexOf(' Gecko/') == -1 &&
+                        navigator.userAgent.indexOf(' Chrome/') == -1) {
+                    window.myPreStreamAudioElement = document.createElement('audio');
+                    window.myPreStreamAudioElement.loop = true;
+                    window.myPreStreamAudioElement.src = 'silence.mp3';
+                    void window.myPreStreamAudioElement.play();
+                }
+
+                appShowPanel('appConnecting');
+
+                // Play loading animation
+                LoadingScreenStart();
+
+                // Generate the signal request for a new WebRTC connection
+                const signalRequest = await window.myGameLiftStreams.generateSignalRequest();
+                // Initiate the connection attempt via our backend server API
+                const streamGroupId = document.getElementById('setupStreamGroupId').value
+                const setupApplicationIdValue = document.getElementById('setupApplicationId').value
+                const locations = document.getElementById('setupLocations').value
+
+                const token = await doPost('/api/CreateStreamSession', {
+                    StreamGroupId: streamGroupId,
+                    ApplicationIdentifier: setupApplicationIdValue === '' ? null : setupApplicationIdValue,
+                    UserId: document.getElementById('setupUserId').value,
+                    AdditionalLaunchArgs: JSON.parse(document.getElementById('setupArgs').value || '[]'),
+                    AdditionalEnvironmentVariables: JSON.parse(document.getElementById('setupEnv').value || '{}'),
+                    SignalRequest: signalRequest,
+                    Locations: locations !== '' ? JSON.parse(document.getElementById('setupLocations').value) : undefined
+                });
+
+                // Loop of sleeping for 1 second, then polling GetSignalResponse
+                // (not infinite, eventually it will succeed or doPost will throw)
+                const getSignalResponseDelayMilliSec = 1000;
+                let signalResponse = '';
+                while (!signalResponse.length) {
+                    console.log('Waiting...');
+                    await new Promise((resolve) => { setTimeout(resolve, getSignalResponseDelayMilliSec); });
+                    signalResponse = (await doPost('/api/GetSignalResponse', token)).SignalResponse;
+                }
+
+                // Complete connection by forwarding signal response to GameLiftStreams object
+                await window.myGameLiftStreams.processSignalResponse(signalResponse);
+
+                LoadingScreenStop();
+
+                // Now that initial connection is complete, store connection token in url's query params
+                setQueryParams(new Map([['token', token.Token]]));
+                appShowReconnectLinks(true);
+
+                appShowPanel('appStreaming');
+            } catch (e) {
+                LoadingScreenStop();
+                console.error(e)
+                window.myGameLiftStreams.close();
+                appShowPanel('appError');
+            } finally {
+                // Clean up the temporary looping audio element, if we created one.
+                if (window.myPreStreamAudioElement) {
+                    window.myPreStreamAudioElement.pause();
+                    window.myPreStreamAudioElement.remove();
+                    delete window.myPreStreamAudioElement;
+                }
+            }
+        }
+
+        async function appReconnectStreaming() {
+            const connectionToken = getQueryParams().get('token');
+            try {
+                appShowPanel('appConnecting');
+
+                // Play loading animation
+                LoadingScreenStart();
+
+                // Generate the signal request for a new WebRTC connection
+                const signalRequest = await window.myGameLiftStreams.generateSignalRequest();
+
+                // Initiate the reconnection request via our backend server API
+                // Unlike CreateStreamSession call which can take up to 30 seconds and requires status polling,
+                // ReconnectStreamSession will return new signal response immediately on success (< 5 seconds)
+                const result = await doPost('/api/ReconnectStreamSession', {
+                    Token: connectionToken,
+                    SignalRequest: signalRequest,
+                });
+                const signalResponse = result.SignalResponse;
+
+                // Complete connection by forwarding signal response to GameLiftStreams object
+                await window.myGameLiftStreams.processSignalResponse(signalResponse);
+
+                LoadingScreenStop();
+
+                appShowPanel('appStreaming');
+            } catch (e) {
+                LoadingScreenStop();
+                console.log(e)
+                window.myGameLiftStreams.close();
+                appShowPanel('appReconnectError');
+            }
+        }
+
+        function appShowReconnectLinks(show) {
+            for (const iter of document.getElementsByClassName('reconnectionLink')) {
+                iter.style.display = show ? 'initial' : 'none';
+            }
+        }
+        
+        function appShowPanel(id) {
+            for (const iter of document.querySelectorAll("body > div")) {
+                iter.style.display = (iter.id === id) ? 'block' : 'none';
+            }
+        }
+
+        function appToggleInput() {
+            window.myInputEnabled = !window.myInputEnabled;
+            if (window.myInputEnabled) {
+                console.log("Attached Input")
+                window.myGameLiftStreams.attachInput();
+                document.getElementById('streamingToggleInput').innerHTML = 'Detach Input';
+            } else {
+                window.myGameLiftStreams.detachInput();
+                document.getElementById('streamingToggleInput').innerHTML = 'Attach Input';
+            }
+        }
+
+        function appGoFullscreen() {
+            // Ensure that input is enabled when going fullscreen
+            if (!window.myInputEnabled) {
+                appToggleInput();
+            }
+            document.getElementById('streamFullscreenContainer').requestFullscreen();
+        }
+
+        function appTerminateStream() {
+            // Fire-and-forget a server request to terminate the stream session immediately.
+            const connectionToken = getQueryParams().get('token');
+            if (connectionToken) {
+                void doPost('/api/DestroyStreamSession', { Token: connectionToken });
+            }
+            // Intentional disconnect, discard token so we don't try to reconnect on refresh.
+            deleteAllQueryParams();
+            appShowReconnectLinks(false);
+            appDisconnect();
+        }
+
+        function appDisconnect() {
+            window.myGameLiftStreams.close();
+            appShowPanel('appDisconnected');
+        }
+
+        // Helper to update pasted content inside text area to easy-to-read JSON format
+        function pastePrettyJson(element, original) {
+            setTimeout(function() {
+                if (original.length === 0) {
+                    element.value = JSON.stringify(JSON.parse(element.value), null, 2);
+                    element.style.height = 'auto';
+                    element.style.height = element.scrollHeight + 'px';
+                    element.style.width = 'auto';
+                    element.style.maxWidth = '200%';
+                }
+            }, 0, element);
+        }
+
+        // Helper to resize text boxes on input event
+        function autoResize() {
+            let element = this;
+            element.style.height = 'auto';
+            element.style.height = element.scrollHeight + 'px';
+            element.style.width = 'auto';
+            element.style.maxWidth = '200%';
+        }
+
+        // Helper to update word-wrap property of text areas as well as corresponding labels
+        function toggleWordWrap() {
+            let cmdLineArgsInput = document.getElementById('setupArgs');
+            let envVarsInput = document.getElementById('setupEnv');
+            let current = cmdLineArgsInput.wrap;
+            if (current === 'soft') {
+                cmdLineArgsInput.wrap = 'off';
+                envVarsInput.wrap = 'off';
+                document.getElementById('setupWordWrap').textContent = 'disabled';
+            } else {
+                cmdLineArgsInput.wrap = 'soft';
+                envVarsInput.wrap = 'soft';
+                document.getElementById('setupWordWrap').textContent = 'enabled';
+            }
+        }
+    </script>
+
+    <!-- Visual styles in this linked file have no effect on functionality -->
+    <link rel="stylesheet" href="pretty.css">
+</head>
+
+<body onload="appInit()">
+
+    <!-- top-level panel -->
+    <div id="appSetup" style="display: none">
+        <h1>Stream Demo - Configuration</h1>
+        <table>
+            <tr><td>User ID:</td><td><input type="text" id="setupUserId" value="Player1"></td></tr>
+            <tr><td>Stream Group ID:</td><td><input type="text" id="setupStreamGroupId"></td></tr>
+            <tr><td>Application ID:</td><td><input type="text" id="setupApplicationId"></td></tr>
+            <tr><td>Placement Locations:</td><td><input type="text" id="setupLocations"></td></tr>
+            <tr><td>Microphone:</td><td><span id="setupMicCheck">disabled</span><button id="setupEnableMic" onclick="appEnableMic()">Enable</button></td></tr>
+        </table>
+        <table id="setupAdvanced" style="display: none">
+            <tr><td>Command-Line Arguments:<br><span id="cmdLineJsonInfo">(optional, JSON list of strings)</span></td><td><textarea id="setupArgs" rows="2" cols="72" wrap="off"></textarea></td></tr>
+            <tr><td>Environment Variables:<br><span id="envVarsJsonInfo">(optional, JSON object with<br>&nbsp;string properties)</span></td><td><textarea id="setupEnv" rows="2" cols="72" wrap="off"></textarea></td></tr>
+            <tr><td>Word-Wrap:</td><td><span id="setupWordWrap">disabled</span><button id="toggleWordWrap" onclick="toggleWordWrap()">Toggle</button></td></tr>
+        </table>
+        <a href="#" onclick="document.getElementById('setupAdvanced').style.display = 'unset'; this.style.display = 'none'; return false">
+            Show Advanced Settings
+        </a>
+        
+        <div id="setupClickToStart"><button onclick="appValidateSetup() && appStartStreaming()">Click To Start</button></div>
+        <div id="setupValidationError"></div>
+    </div>
+
+
+    <!-- top-level panel -->
+    <div id="appReconnect" style="display: none">
+        <h1>Stream Demo - Session Interrupted</h1>
+        <div id="reconnectClickToReconnect"><button onclick="appReconnectStreaming()">Reconnect</button></div>
+        <p>or</p>
+        <p><a href="#" onclick="deleteAllQueryParams(); window.location.reload(); return false">Click to restart</a></p>
+    </div>
+
+
+    <!-- top-level panel -->
+    <div id="appConnecting" style="display: none">
+        <h1>Connecting...</h1>
+        <canvas id="loadingScreenCanvas"></canvas>
+    </div>
+
+
+    <!-- top-level panel -->
+    <div id="appStreaming" style="display: none">
+        <h1>Stream Connected</h1>
+        <div id="streamControls">
+            <button id="streamingToggleInput" onclick="appToggleInput()">Attach Input</button>
+            <button id="streamingGoFullscreen" onclick="appGoFullscreen()">Go Fullscreen</button>
+            <button id="streamingTerminate" onclick="appTerminateStream()">Terminate</button>
+        </div>
+
+        <div id="streamFullscreenContainer">
+            <div id="streamFullscreenOverlay">&nbsp;<!-- important for :fullscreen CSS --></div>
+            <video id="streamVideoElement" autoplay playsinline disablepictureinpicture></video>
+            <audio id="streamAudioElement" autoplay></audio>
+        </div>
+    </div>
+    
+
+    <!-- top-level panel -->
+    <div id="appDisconnected" style="display: none">
+        <h1>Stream Disconnected</h1>
+        <p class="reconnectionLink"><a href="#" onclick="window.location.reload(); return false">Click to attempt reconnection</a></p>
+        <p><a href="#" onclick="deleteAllQueryParams(); window.location.reload(); return false">Click to restart</a></p>
+    </div>
+
+
+    <!-- top-level panel -->
+    <div id="appError" style="display: none">
+        <h1>Stream Error</h1>
+        <p>Consult server.js output log for error details</p>
+        <p class="reconnectionLink"><a href="#" onclick="window.location.reload(); return false">Click to attempt reconnection</a></p>
+        <p><a href="#" onclick="deleteAllQueryParams(); window.location.reload(); return false">Click to restart</a></p>
+    </div>
+
+
+    <!-- top-level panel -->
+    <div id="appReconnectError" style="display: none">
+        <h1>Reconnection Error</h1>
+        <p>Consult server.js output log for error details</p>
+        <p><a href="#" onclick="deleteAllQueryParams(); window.location.reload(); return false">Click to restart</a></p>
+    </div>
+
+</body>
+</html>

@@ -1,0 +1,26 @@
+# @license
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+#
+# This file is responsible for defining what files we want to add a license header to,
+#  along with what license header.
+files:
+  '**/*.ts':
+    header:
+      startBlock: // @license
+      linePrefix: '// '
+      endBlock: '//'
+ignore:
+  - .git
+  - .npm
+  - .vscode
+  - dist.edge
+  - dist.frontend
+  - src/frontend/scripts/AmazonGameLiftStreamsWebSDK-v1.0
+  - node_modules
+# FIXME These all get ignored because "#! node" interferes.
+  - build-utils/scripts
+  - src/infra.aws/cdk-apps
+license: |
+  Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+  SPDX-License-Identifier: MIT-0

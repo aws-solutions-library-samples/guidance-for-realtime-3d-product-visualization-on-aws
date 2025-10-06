@@ -1,0 +1,522 @@
+# @license
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+#
+# This file is responsible for defining AWS related developer commands.
+# This approach does not use the AWS CDK bells and whistles because they've bitten us in the past (no context, etc.).
+include makefile.inc
+stage := main
+app_location := aws
+
+# Include environment configuration.
+ifneq (,$(wildcard ./config/.env))
+	include ./config/.env
+	export
+endif
+
+# Trim spaces and comments from env variables
+override aws_main_deploy_id := $(strip $(firstword $(subst \#, ,$(aws_main_deploy_id))))
+override aws_main_cdk_qualifier := $(strip $(firstword $(subst \#, ,$(aws_main_cdk_qualifier))))
+override aws_cfn_prefix := $(strip $(firstword $(subst \#, ,$(aws_cfn_prefix))))
+override aws_cdk_toolkit_cfn_stack_suffix := $(strip $(firstword $(subst \#, ,$(aws_cdk_toolkit_cfn_stack_suffix))))
+override aws_cicd_cfn_stack_suffix := $(strip $(firstword $(subst \#, ,$(aws_cicd_cfn_stack_suffix))))
+
+
+# Used to add specific permissions to CICD, but only after after certain Cfn stacks are created.
+self_mutate_pipeline ?= false
+
+# Default to deploy action; synth can be used to test if infra code is somewhat valid and is used for CICD infra scanning.
+# Options: deploy | synth
+cdk_action := deploy
+
+# Enables AWS CloudFormation template scanning.
+# Options: false | true
+cdk_nag := true
+
+# Used to override cfn args.
+cfn_args :=
+
+# Used to deploy a cfn stack that requires updating before destroying.
+destroy := false
+
+deploy/main:
+	$(eval restrict_to_public_ip := $(shell curl ipinfo.io/ip))
+
+# Store your public IP in AWS SSM. This sample restricts Amazon CloudFront access to your current public IP.
+	aws ssm put-parameter --name "/${aws_cfn_prefix}/$(stage)/restrict-to-public-ip/${aws_$(stage)_deploy_id}" --type "String" --value "$(restrict_to_public_ip)" --overwrite --profile ${aws_main_cli_profile} --region "${aws_$(stage)_region}"
+
+	make -f makefile.aws deploy/cdk/main && make -f makefile.aws deploy/cicd/main && make -f makefile.aws start/cicd/main
+
+deploy/cdk/main:
+# "CDK bootstrap" in required region for AWS WAF and frontend AWS Lambda@edge functions.
+	make -f makefile.aws stage=main region="us-east-1" aws_cli_profile_arg="--profile ${aws_$(stage)_cli_profile}" deploy/cdk
+# "CDK bootstrap" in configured region.
+	make -f makefile.aws stage=main region="${aws_$(stage)_region}" aws_cli_profile_arg="--profile ${aws_$(stage)_cli_profile}" deploy/cdk
+deploy/cdk:
+ifeq ($(cdk_action),synth)
+	@echo "Not supported yet - requires using a bucket"
+endif
+ifeq ($(cdk_action),deploy)
+	aws cloudformation deploy \
+		$(aws_cli_profile_arg) \
+		--stack-name "${aws_cfn_prefix}-$(stage)-${aws_cdk_toolkit_cfn_stack_suffix}-${aws_$(stage)_deploy_id}" \
+		--template-file $(shell pwd)/config/cdk-bootstrap-cfn-template.yaml \
+		--parameter-overrides \
+			TrustedAccounts=${aws_$(stage)_account_id} \
+			TrustedAccountsForLookup=${aws_$(stage)_account_id} \
+			CloudFormationExecutionPolicies=${aws_cdk_policy_arn} \
+			Qualifier=${aws_$(stage)_cdk_qualifier} \
+		--capabilities CAPABILITY_NAMED_IAM \
+		--region "$(region)"
+	aws cloudformation wait stack-create-complete \
+		$(aws_cli_profile_arg) \
+		--stack-name "${aws_cfn_prefix}-$(stage)-${aws_cdk_toolkit_cfn_stack_suffix}-${aws_$(stage)_deploy_id}" \
+		--region "$(region)"
+endif
+
+deploy/cicd/main:
+# If running this from CodeBuild (CODEBUILD_CI set by CodeBuild), don't supply "--profile <profile>" since even setting "--profile default" breaks auth.
+	if [ "${CODEBUILD_CI}" = true ]; then \
+		make -f makefile.aws cdk_action="$(cdk_action)" stage=main aws_cli_profile_arg="" deploy/cicd; \
+	else \
+		make -f makefile.aws cdk_action="$(cdk_action)" stage=main aws_cli_profile_arg="--profile ${aws_main_cli_profile}" deploy/cicd; \
+	fi
+
+deploy/cicd:
+	npx cdk context --clear; \
+	npx cdk $(cdk_action) --toolkit-stack-name "${aws_cfn_prefix}-$(stage)-${aws_cdk_toolkit_cfn_stack_suffix}-${aws_$(stage)_deploy_id}" -v \
+		--app "node --experimental-specifier-resolution=node --trace-uncaught --experimental-modules --no-warnings --loader $(ts_exec_ts_node) ./src/infra.aws/cdk-apps/cicd.ts" \
+		--require-approval never \
+		$(aws_cli_profile_arg) \
+		--context cdk-action=$(cdk_action) \
+		--context cdk-nag=$(cdk_nag) \
+		--context account-id=${aws_$(stage)_account_id} \
+		--context region=${aws_$(stage)_region} \
+		--context stage=$(stage) \
+		--context deploy-id=${aws_$(stage)_deploy_id} \
+		--context self-mutate-pipeline=$(self_mutate_pipeline) \
+		--context website-bucket-name=$(website_bucket_name) \
+		--context app-bucket-name=$(app_bucket_name) \
+		--context app-url=$(app_url) \
+		--context distribution-id=$(distribution_id) \
+		"${aws_cfn_prefix}-$(stage)-${aws_cicd_cfn_stack_suffix}-${aws_$(stage)_deploy_id}";
+
+lookup:
+	$(eval cfn_export_key_1 := $(shell ./build-utils/infra/aws.strip-dashes.sh "${aws_cfn_prefix}-$(stage)-${aws_frontend_website_bucket_name_cfn_export_name_suffix}-${aws_$(stage)_deploy_id}"))
+	$(eval cfn_export_key_2 := $(shell ./build-utils/infra/aws.strip-dashes.sh "${aws_cfn_prefix}-$(stage)-${aws_frontend_website_url_cfn_export_name_suffix}-${aws_$(stage)_deploy_id}"))
+	$(eval cfn_export_key_3 := $(shell ./build-utils/infra/aws.strip-dashes.sh "${aws_cfn_prefix}-$(stage)-${aws_frontend_distribution_id_cfn_export_name_suffix}-${aws_$(stage)_deploy_id}"))
+	$(eval cfn_export_key_4 := $(shell ./build-utils/infra/aws.strip-dashes.sh "${aws_cfn_prefix}-$(stage)-${aws_backend_app_bucket_name_cfn_export_name_suffix}-${aws_$(stage)_deploy_id}"))
+
+	./build-utils/infra/aws.self-mutate.sh "$(cdk_action)" "${aws_cfn_prefix}" "$(stage)" "${aws_$(stage)_deploy_id}" "${aws_frontend_cfn_stack_suffix}" "${aws_backend_cfn_stack_suffix}" "${aws_$(stage)_region}" "$(cfn_export_key_1)" "$(cfn_export_key_2)" "$(cfn_export_key_3)" "$(cfn_export_key_4)" "$(aws_cli_profile_arg)"
+
+# CICD can be run locally or on AWS.
+# You can test the CICD deployment by "synthing" rather than "deploying". 
+# As a result of these variations, some CICD business logic is different depending on where it's ran.
+deploy/from-cicd:
+	@echo "cdk_action:$(cdk_action) app_location:$(app_location) stage:$(stage)"
+
+# AWS CodePipeline only supports single files as input (i.e. zip files for groups of files),
+#  but we use "s3 sync" to get files to CICD for cost reasons.
+# We'll have to download the actual source manually.
+#
+# CICD notes:
+# 'Tis a bit tricky:
+# * Need to account for source code updates to CICD
+# * Amazon GameLift Streams applications must be created with an existing bucket and a binary in it
+# * CICD doesn't have all the permissions it needs up front
+# * Edge functions are (need to be?) bundled with "website and cdn", i.e. frontend stack
+# * We can only upload the website files after the frontend stack has been deployed
+# * AWS WAF resource protection requires the domain name of the Amazon CloudFront distribution, but we need AWS WAF info bundled into frontend (catch-22 = 2 frontend stack deploys)
+ifeq ($(app_location),aws)
+# AWS CloudFormation will automatically remove dashes from exports, so make sure our export keys have them removed to.
+	$(eval cfn_export_key := $(shell ./build-utils/infra/aws.strip-dashes.sh "${aws_cfn_prefix}-$(stage)-${aws_cicd_source_code_bucket_name_cfn_export_name_suffix}-${aws_$(stage)_deploy_id}"))
+	@echo "lookup cfn export: $(cfn_export_key)"
+	$(eval aws_source_code_bucket := $(shell aws cloudformation describe-stacks --stack-name "${aws_cfn_prefix}-$(stage)-${aws_cicd_cfn_stack_suffix}-${aws_$(stage)_deploy_id}" $(aws_cli_profile_arg) --region "${aws_$(stage)_region}" --query 'Stacks[0].Outputs[?OutputKey==`${cfn_export_key}`].OutputValue' --output text))
+
+	cd ${CODEBUILD_SRC_DIR}; aws s3 sync "s3://${aws_source_code_bucket}" ./ --region "${aws_$(stage)_region}" $(aws_cli_profile_arg)
+# FIXME Not sure why but all scripts no longer executable.
+	find ${CODEBUILD_SRC_DIR} -type f -iname "*.sh" -exec chmod +x {} \;
+	cd ${CODEBUILD_SRC_DIR}; ls -al; ls -al ./amazon-gamelift-streams/config/.env
+endif
+
+# No need to install dependencies when synthing.
+ifeq ($(cdk_action),deploy)
+	make setup
+	make install
+	node --version
+endif
+
+# Generate an application binary to stream.
+	cd ../placeholder-app; make -f makefile.docker build/app-builder; make -f makefile.docker run/app-builder
+
+# Deploy any changes to CICD infra that might have been made (we always forget).
+	make -f makefile.aws cdk_action="$(cdk_action)" stage="$(stage)" deploy/cicd
+
+# This doesn't do much initially; it just creates a bucket to store our application binary and any other files it needs to run.
+	make -f makefile.aws cdk_action="$(cdk_action)" stage="$(stage)" app_files_uploaded=false deploy/backend
+
+	$(eval restrict_to_public_ip := $(shell aws ssm get-parameter --name "/${aws_cfn_prefix}/$(stage)/restrict-to-public-ip/${aws_$(stage)_deploy_id}" --query "Parameter.Value" --output text --region "${aws_$(stage)_region}" $(aws_cli_profile_arg)))
+	@echo "restrict_to_public_ip: $(restrict_to_public_ip)"
+
+# Deploy our frontend firewall. This sample restricts website viewing to your current public IP (use AWS console to update if it changes, or re-deploy).
+	make -f makefile.aws cdk_action="$(cdk_action)" stage="$(stage)" restrict_to_public_ip="$(restrict_to_public_ip)" deploy/frontend-waf
+
+# Deploy our frontend (website, CDN). No content will exist, just the "web server" and CDN.
+	make -f makefile.aws cdk_action="$(cdk_action)" stage="$(stage)" app_files_uploaded=false deploy/frontend
+
+# Need to now create captcha and intelligent threat API resources (if not created yet).
+# Once these are created, we'll need to re-deploy the frontend again.
+ifeq ($(cdk_action),deploy)
+	./build-utils/infra/aws.try-create-waf-resources.sh "${aws_cfn_prefix}" "$(stage)" "${aws_$(stage)_deploy_id}" "${aws_$(stage)_region}" "${aws_frontend_website_url_cfn_export_name_suffix}" "${aws_frontend_cfn_stack_suffix}" "$(aws_cli_profile_arg)"
+endif
+
+# CICD won't have access to certain resources due to them not being created when initially deployed,
+#  e.g. we won't have access to upload the application and website files to an Amazon S3 bucket and then invalidate our Amazon CloudFront distribution's cache.
+# "Self-mutate" adjusts CICD access policies to allow CICD to do that.
+# Also, because the frontend is always deployed to us-east-1 (edge function limitation), and CICD may be in another region,
+#  cfn lookup fails, and we need CICD to lookup those resources to add access.
+# Just manually look them up and pass in to CICD during self-mutate.
+#
+# FIXME This works...sometimes. Not sure why the cfn lookups sometimes fail. Moved to bash script.
+# $(eval cfn_export_key_1 := $(shell ./build-utils/infra/aws.strip-dashes.sh "${aws_cfn_prefix}-$(stage)-${aws_frontend_website_bucket_name_cfn_export_name_suffix}-${aws_$(stage)_deploy_id}"))
+# @echo "lookup cfn export: $(cfn_export_key_1)"
+# $(eval website_bucket_name := $(shell aws cloudformation describe-stacks --stack-name "${aws_cfn_prefix}-$(stage)-${aws_frontend_cfn_stack_suffix}-${aws_$(stage)_deploy_id}" $(aws_cli_profile_arg) --region "us-east-1" --query 'Stacks[0].Outputs[?OutputKey==`$(cfn_export_key_1)`].OutputValue' --output text))
+# @echo "found cfn export website_bucket_name: $(website_bucket_name)"
+#
+# $(eval cfn_export_key_2 := $(shell ./build-utils/infra/aws.strip-dashes.sh "${aws_cfn_prefix}-$(stage)-${aws_frontend_website_url_cfn_export_name_suffix}-${aws_$(stage)_deploy_id}"))
+# @echo "lookup cfn export: $(cfn_export_key_2)"
+# $(eval app_url := $(shell aws cloudformation describe-stacks --stack-name "${aws_cfn_prefix}-$(stage)-${aws_frontend_cfn_stack_suffix}-${aws_$(stage)_deploy_id}" $(aws_cli_profile_arg) --region "us-east-1" --query 'Stacks[0].Outputs[?OutputKey==`$(cfn_export_key_2)`].OutputValue' --output text))
+# @echo "found cfn export app_url: $(app_url)"
+#
+# $(eval cfn_export_key_3 := $(shell ./build-utils/infra/aws.strip-dashes.sh "${aws_cfn_prefix}-$(stage)-${aws_frontend_distribution_id_cfn_export_name_suffix}-${aws_$(stage)_deploy_id}"))
+# @echo "lookup cfn export: $(cfn_export_key_3)"
+# $(eval distribution_id := $(shell aws cloudformation describe-stacks --stack-name "${aws_cfn_prefix}-$(stage)-${aws_frontend_cfn_stack_suffix}-${aws_$(stage)_deploy_id}" $(aws_cli_profile_arg) --region "us-east-1" --query 'Stacks[0].Outputs[?OutputKey==`$(cfn_export_key_3)`].OutputValue' --output text))
+# @echo "found cfn export distribution_id: $(distribution_id)"
+#
+# $(eval cfn_export_key_4 := $(shell ./build-utils/infra/aws.strip-dashes.sh "${aws_cfn_prefix}-$(stage)-${aws_backend_app_bucket_name_cfn_export_name_suffix}-${aws_$(stage)_deploy_id}"))
+# @echo "lookup cfn export: $(cfn_export_key_4)"
+# $(eval app_bucket_name := $(shell aws cloudformation describe-stacks --stack-name "${aws_cfn_prefix}-$(stage)-${aws_backend_cfn_stack_suffix}-${aws_$(stage)_deploy_id}" $(aws_cli_profile_arg) --region "${aws_$(stage)_region}" --query 'Stacks[0].Outputs[?OutputKey==`$(cfn_export_key_4)`].OutputValue' --output text))
+# @echo "found cfn export app_bucket_name: $(app_bucket_name)"
+#
+# make -f makefile.aws \
+# 	cdk_action="$(cdk_action)" \
+# 	stage="$(stage)" \
+# 	self_mutate_pipeline=true \
+# 	website_bucket_name=$(website_bucket_name) \
+# 	app_bucket_name=$(app_bucket_name) \
+# 	app_url=$(app_url) \
+# 	distribution_id=$(distribution_id) \
+# 	deploy/cicd
+	$(eval cfn_export_key_1 := $(shell ./build-utils/infra/aws.strip-dashes.sh "${aws_cfn_prefix}-$(stage)-${aws_frontend_website_bucket_name_cfn_export_name_suffix}-${aws_$(stage)_deploy_id}"))
+	$(eval cfn_export_key_2 := $(shell ./build-utils/infra/aws.strip-dashes.sh "${aws_cfn_prefix}-$(stage)-${aws_frontend_website_url_cfn_export_name_suffix}-${aws_$(stage)_deploy_id}"))
+	$(eval cfn_export_key_3 := $(shell ./build-utils/infra/aws.strip-dashes.sh "${aws_cfn_prefix}-$(stage)-${aws_frontend_distribution_id_cfn_export_name_suffix}-${aws_$(stage)_deploy_id}"))
+	$(eval cfn_export_key_4 := $(shell ./build-utils/infra/aws.strip-dashes.sh "${aws_cfn_prefix}-$(stage)-${aws_backend_app_bucket_name_cfn_export_name_suffix}-${aws_$(stage)_deploy_id}"))
+
+	./build-utils/infra/aws.self-mutate.sh "$(cdk_action)" "${aws_cfn_prefix}" "$(stage)" "${aws_$(stage)_deploy_id}" "${aws_frontend_cfn_stack_suffix}" "${aws_backend_cfn_stack_suffix}" "${aws_$(stage)_region}" "$(cfn_export_key_1)" "$(cfn_export_key_2)" "$(cfn_export_key_3)" "$(cfn_export_key_4)" "$(aws_cli_profile_arg)"
+	
+# We've deployed the infra but there's no content:
+# * upload the application binary and any files it needs to work
+# * upload the website files the application streaming is embedded in
+ifeq ($(cdk_action),deploy)
+	make -f makefile.aws stage="$(stage)" aws_cli_profile_arg="$(aws_cli_profile_arg)" upload/app-files
+	make -f makefile.aws stage="$(stage)" aws_cli_profile_arg="$(aws_cli_profile_arg)" upload/website
+endif
+
+# Re-deploy the backend to create Amazon GameLift Streams resources.
+	make -f makefile.aws cdk_action="$(cdk_action)" stage="$(stage)" app_files_uploaded=true deploy/backend
+
+# Re-deploy frontend to create edge function and website that need references to:
+# * Amazon GameLift Streams resources
+# * AWS WAF resources
+	aws ssm get-parameter --name "/${aws_cfn_prefix}/$(stage)/aws-waf-api-key/${aws_$(stage)_deploy_id}" --query "Parameter.Value" --output text --region "${aws_$(stage)_region}" $(aws_cli_profile_arg)
+	
+	$(eval waf_api_key := $(shell aws ssm get-parameter --name "/${aws_cfn_prefix}/$(stage)/aws-waf-api-key/${aws_$(stage)_deploy_id}" --query "Parameter.Value" --output text --region "${aws_$(stage)_region}" $(aws_cli_profile_arg)))
+	@echo "waf_api_key: $(waf_api_key)"
+
+	$(eval aws_waf_captcha_integration_url := $(shell aws wafv2 list-api-keys --scope "CLOUDFRONT" --region "us-east-1" $(aws_cli_profile_arg) | jq -r '.ApplicationIntegrationURL'))
+	@echo "aws_waf_captcha_integration_url: $(aws_waf_captcha_integration_url)"
+
+	make -f makefile.aws \
+		cdk_action="$(cdk_action)" \
+		stage="$(stage)" \
+		app_files_uploaded=true \
+		aws_waf_api_key="$(waf_api_key)" \
+		aws_waf_captcha_integration_url="$(aws_waf_captcha_integration_url)" \
+		deploy/frontend
+
+# Finally, invalidate the distribution.
+ifeq ($(cdk_action),deploy)
+	make -f makefile.aws stage=$(stage) invalidate-cdn-cache
+endif
+
+deploy/backend/main:
+# If running this from CodeBuild (CODEBUILD_CI set by CodeBuild), don't supply "--profile <profile>" since even setting "--profile default" breaks auth.
+	if [ "${CODEBUILD_CI}" = true ]; then \
+		make -f makefile.aws cdk_action="$(cdk_action)" stage=main aws_cli_profile_arg="" deploy/backend; \
+	else \
+		make -f makefile.aws cdk_action="$(cdk_action)" stage=main aws_cli_profile_arg="--profile ${aws_$(stage)_cli_profile}" deploy/backend; \
+	fi
+deploy/backend:
+# FIXME ts-node/esm randomly stopped working...introduced tsx/esm here. Probably time to move on from ts-node/esm, not sure why I used it for AWS CDK apps over tsx/esm.
+	npx cdk context --clear; \
+	npx cdk $(cdk_action) --toolkit-stack-name "${aws_cfn_prefix}-$(stage)-${aws_cdk_toolkit_cfn_stack_suffix}-${aws_$(stage)_deploy_id}" -v \
+		--app "node --experimental-specifier-resolution=node --trace-uncaught --experimental-modules --no-warnings --import $(ts_exec_tsx) ./src/infra.aws/cdk-apps/backend.ts" \
+		--require-approval never \
+		$(aws_cli_profile_arg) \
+		--context cdk-action=$(cdk_action) \
+		--context cdk-nag=$(cdk_nag) \
+		--context account-id=${aws_$(stage)_account_id} \
+		--context region=us-east-1 \
+		--context stage=$(stage) \
+		--context deploy-id=${aws_$(stage)_deploy_id} \
+		--context destroy=$(destroy) \
+		--context app-files-uploaded=$(app_files_uploaded) \
+		"${aws_cfn_prefix}-$(stage)-${aws_backend_cfn_stack_suffix}-${aws_$(stage)_deploy_id}";
+
+upload/app-files:
+	$(eval cfn_export_key := $(shell ./build-utils/infra/aws.strip-dashes.sh "${aws_cfn_prefix}-$(stage)-${aws_backend_app_bucket_name_cfn_export_name_suffix}-${aws_$(stage)_deploy_id}"))
+	@echo "lookup cfn export: $(cfn_export_key)"
+	$(eval app_files_bucket_name := $(shell aws cloudformation describe-stacks --stack-name "${aws_cfn_prefix}-$(stage)-${aws_backend_cfn_stack_suffix}-${aws_$(stage)_deploy_id}" $(aws_cli_profile_arg) --region "${aws_$(stage)_region}" --query 'Stacks[0].Outputs[?OutputKey==`$(cfn_export_key)`].OutputValue' --output text))
+	@echo "found cfn export app_files_bucket_name: $(app_files_bucket_name)"
+	
+	aws s3 sync ${app_dist_dir} "s3://${app_files_bucket_name}/app-files/" --delete --region "${aws_$(stage)_region}" $(aws_cli_profile_arg)
+
+deploy/frontend-waf/main:
+# If running this from CodeBuild (CODEBUILD_CI set by CodeBuild), don't supply "--profile <profile>" since even setting "--profile default" breaks auth.
+	if [ "${CODEBUILD_CI}" = true ]; then \
+		make -f makefile.aws cdk_action="$(cdk_action)" stage=main restrict_to_public_ip="$(restrict_to_public_ip)" aws_cli_profile_arg="" deploy/frontend-waf; \
+	else \
+		make -f makefile.aws cdk_action="$(cdk_action)" stage=main restrict_to_public_ip="$(restrict_to_public_ip)" aws_cli_profile_arg="--profile ${aws_$(stage)_cli_profile}" deploy/frontend-waf; \
+	fi
+deploy/frontend-waf:
+	npx cdk context --clear; \
+	npx cdk $(cdk_action) --toolkit-stack-name "${aws_cfn_prefix}-$(stage)-${aws_cdk_toolkit_cfn_stack_suffix}-${aws_$(stage)_deploy_id}" -v \
+		--app "node --experimental-specifier-resolution=node --trace-uncaught --experimental-modules --no-warnings --loader $(ts_exec_ts_node) ./src/infra.aws/cdk-apps/frontend.waf.ts" \
+		--require-approval never \
+		$(aws_cli_profile_arg) \
+		--context cdk-action=$(cdk_action) \
+		--context cdk-nag=$(cdk_nag) \
+		--context account-id=${aws_$(stage)_account_id} \
+		--context region=us-east-1 \
+		--context stage=$(stage) \
+		--context deploy-id=${aws_$(stage)_deploy_id} \
+		--context restrict-to-public-ip="$(restrict_to_public_ip)" \
+		"${aws_cfn_prefix}-$(stage)-${aws_frontend_waf_cfn_stack_suffix}-${aws_$(stage)_deploy_id}";
+
+deploy/frontend/main:
+# If running this from CodeBuild (CODEBUILD_CI set by CodeBuild), don't supply "--profile <profile>" since even setting "--profile default" breaks auth.
+	if [ "${CODEBUILD_CI}" = true ]; then \
+		make -f makefile.aws cdk_action="$(cdk_action)" stage=main aws_cli_profile_arg="" deploy/frontend; \
+	else \
+		make -f makefile.aws cdk_action="$(cdk_action)" stage=main aws_cli_profile_arg="--profile ${aws_$(stage)_cli_profile}" deploy/frontend; \
+	fi
+deploy/frontend:
+ifeq ($(destroy),false)
+# This sample stores some frontend data used by AWS WAF in AWS SSM.
+	$(eval aws_waf_api_key := $(shell aws ssm get-parameter --name "/${aws_cfn_prefix}/$(stage)/aws-waf-api-key/${aws_$(stage)_deploy_id}" --query "Parameter.Value" --output text --region "${aws_$(stage)_region}" $(aws_cli_profile_arg)))
+	@echo "aws_waf_api_key: $(aws_waf_api_key)"
+
+	make \
+		node_env=$(node_env) \
+		app_location=$(app_location) \
+		target=web \
+		aws_waf_api_key="$(aws_waf_api_key)" \
+		aws_waf_captcha_integration_url="$(aws_waf_captcha_integration_url)" \
+		build/frontend
+endif
+
+# We can deploy our edge function w/o Amazon GameLift Streams resources,
+#  but it will fail without those resources being created.
+ifeq ($(destroy),false)
+ifeq ($(app_files_uploaded),true)
+# @edge functions don't support env variables so write them into the edge function.
+	$(eval cfn_export_key := $(shell ./build-utils/infra/aws.strip-dashes.sh "${aws_cfn_prefix}-$(stage)-${aws_backend_gls_application_id_cfn_export_name_suffix}-${aws_$(stage)_deploy_id}"))
+	@echo "lookup cfn export: $(cfn_export_key)"
+	$(eval backend_gls_application_id := $(shell aws cloudformation describe-stacks --stack-name "${aws_cfn_prefix}-$(stage)-${aws_backend_cfn_stack_suffix}-${aws_$(stage)_deploy_id}" $(aws_cli_profile_arg) --region "${aws_$(stage)_region}" --query 'Stacks[0].Outputs[?OutputKey==`$(cfn_export_key)`].OutputValue' --output text))
+	@echo "found cfn export backend_gls_application_id: $(backend_gls_application_id)"
+	$(eval escaped_backend_gls_application_id := $(subst /,\/,$(backend_gls_application_id)))
+	echo "escaped backend_gls_application_id: $(escaped_backend_gls_application_id)"
+
+	$(eval cfn_export_key := $(shell ./build-utils/infra/aws.strip-dashes.sh "${aws_cfn_prefix}-$(stage)-${aws_backend_gls_stream_group_id_cfn_export_name_suffix}-${aws_$(stage)_deploy_id}"))
+	@echo "lookup cfn export: $(cfn_export_key)"
+	$(eval backend_gls_stream_group_id := $(shell aws cloudformation describe-stacks --stack-name "${aws_cfn_prefix}-$(stage)-${aws_backend_cfn_stack_suffix}-${aws_$(stage)_deploy_id}" $(aws_cli_profile_arg) --region "${aws_$(stage)_region}" --query 'Stacks[0].Outputs[?OutputKey==`$(cfn_export_key)`].OutputValue' --output text))
+	@echo "found cfn export backend_gls_stream_group_id: $(backend_gls_stream_group_id)"
+	$(eval escaped_backend_gls_stream_group_id := $(subst /,\/,$(backend_gls_stream_group_id)))
+	echo "escaped backend_gls_stream_group_id: $(escaped_backend_gls_stream_group_id)"
+
+	sed -i "s/let stage_added_by_build: string | undefined;/let stage_added_by_build: string | undefined = \"$(stage)\";/g" src/@types/global-this.ts
+	sed -i "s/let aws_region_added_by_build: string | undefined;/let aws_region_added_by_build: string | undefined = \"${aws_$(stage)_region}\";/g" src/@types/global-this.ts
+	sed -i "s/let aws_gls_stream_group_id_added_by_build: string | undefined;/let aws_gls_stream_group_id_added_by_build: string | undefined = \"$(escaped_backend_gls_stream_group_id)\";/g" src/@types/global-this.ts
+	sed -i "s/let aws_gls_application_group_id_added_by_build: string | undefined;/let aws_gls_application_group_id_added_by_build: string | undefined = \"$(escaped_backend_gls_application_id)\";/g" src/@types/global-this.ts
+	cat src/@types/global-this.ts
+endif 
+endif 
+
+	make node_env=$(node_env) app_location=$(app_location) package/edge
+
+	npx cdk context --clear; \
+	npx cdk $(cdk_action) --toolkit-stack-name "${aws_cfn_prefix}-$(stage)-${aws_cdk_toolkit_cfn_stack_suffix}-${aws_$(stage)_deploy_id}" -v \
+		--app "node --experimental-specifier-resolution=node --trace-uncaught --experimental-modules --no-warnings --loader $(ts_exec_ts_node) ./src/infra.aws/cdk-apps/frontend.ts" \
+		--require-approval never \
+		$(aws_cli_profile_arg) \
+		--context cdk-action=$(cdk_action) \
+		--context cdk-nag=$(cdk_nag) \
+		--context account-id=${aws_$(stage)_account_id} \
+		--context stage=$(stage) \
+		--context deploy-id=${aws_$(stage)_deploy_id} \
+		--context app-files-uploaded=$(app_files_uploaded) \
+		--context edge-dist-dir=$(shell pwd)/$(edge_dist_dir) \
+		--context destroy=$(destroy) \
+		--context gls-stream-group-id=$(backend_gls_stream_group_id) \
+		--context gls-application-id=$(backend_gls_application_id) \
+		"${aws_cfn_prefix}-$(stage)-${aws_frontend_cfn_stack_suffix}-${aws_$(stage)_deploy_id}";
+
+upload/website:
+	$(eval cfn_export_key := $(shell ./build-utils/infra/aws.strip-dashes.sh "${aws_cfn_prefix}-$(stage)-${aws_frontend_website_bucket_name_cfn_export_name_suffix}-${aws_$(stage)_deploy_id}"))
+	@echo "lookup cfn export: $(cfn_export_key)"
+	$(eval website_bucket_name := $(shell aws cloudformation describe-stacks --stack-name "${aws_cfn_prefix}-$(stage)-${aws_frontend_cfn_stack_suffix}-${aws_$(stage)_deploy_id}" $(aws_cli_profile_arg) --region "us-east-1" --query 'Stacks[0].Outputs[?OutputKey==`$(cfn_export_key)`].OutputValue' --output text))
+	@echo "found cfn export website_bucket_name: $(website_bucket_name)"
+
+	$(eval cfn_export_key := $(shell ./build-utils/infra/aws.strip-dashes.sh "${aws_cfn_prefix}-$(stage)-${aws_frontend_distribution_id_cfn_export_name_suffix}-${aws_$(stage)_deploy_id}"))
+	@echo "lookup cfn export: $(cfn_export_key)"
+	$(eval distribution_id := $(shell aws cloudformation describe-stacks --stack-name "${aws_cfn_prefix}-$(stage)-${aws_frontend_cfn_stack_suffix}-${aws_$(stage)_deploy_id}" $(aws_cli_profile_arg) --region "us-east-1" --query 'Stacks[0].Outputs[?OutputKey==`$(cfn_export_key)`].OutputValue' --output text))
+	@echo "found cfn export distribution_id: $(distribution_id)"
+
+	aws s3 sync ./${frontend_dist_dir} "s3://${website_bucket_name}" --delete --region "us-east-1" $(aws_cli_profile_arg)
+
+invalidate-cdn-cache:
+	$(eval cfn_export_key := $(shell ./build-utils/infra/aws.strip-dashes.sh "${aws_cfn_prefix}-$(stage)-${aws_frontend_distribution_id_cfn_export_name_suffix}-${aws_$(stage)_deploy_id}"))
+	@echo "lookup cfn export: $(cfn_export_key)"
+	$(eval distribution_id := $(shell aws cloudformation describe-stacks --stack-name "${aws_cfn_prefix}-$(stage)-${aws_frontend_cfn_stack_suffix}-${aws_$(stage)_deploy_id}" $(aws_cli_profile_arg) --region "us-east-1" --query 'Stacks[0].Outputs[?OutputKey==`$(cfn_export_key)`].OutputValue' --output text))
+	@echo "found cfn export distribution_id: $(distribution_id)"
+
+	aws cloudfront create-invalidation --distribution-id ${distribution_id} --paths "/*" --region "${aws_$(stage)_region}" $(aws_cli_profile_arg)
+
+start/cicd/main:
+	make -f makefile.aws stage=main aws_cli_profile_arg="--profile ${aws_$(stage)_cli_profile}" start/cicd
+start/cicd:
+# AWS CloudFormation will automatically remove dashes from exports, so make sure our export keys have them removed to.
+	$(eval cfn_export_key := $(shell ./build-utils/infra/aws.strip-dashes.sh "${aws_cfn_prefix}-$(stage)-${aws_cicd_source_code_bucket_name_cfn_export_name_suffix}-${aws_$(stage)_deploy_id}"))
+	@echo "lookup cfn export: $(cfn_export_key)"
+	$(eval aws_source_code_bucket := $(shell aws cloudformation describe-stacks --stack-name "${aws_cfn_prefix}-$(stage)-${aws_cicd_cfn_stack_suffix}-${aws_$(stage)_deploy_id}" $(aws_cli_profile_arg) --region "${aws_$(stage)_region}" --query 'Stacks[0].Outputs[?OutputKey==`${cfn_export_key}`].OutputValue' --output text))
+	make -f makefile.aws stage="$(stage)" aws_cli_profile_arg="$(aws_cli_profile_arg)" s3_bucket=$(aws_source_code_bucket) sync-source-to-main
+sync-source-to-main:
+	./build-utils/infra/aws.sync-but-ignore-gitignored.sh "s3://$(s3_bucket)" "${aws_$(stage)_region}" "$(aws_cli_profile_arg)"
+	rm -f /tmp/cicd-trigger || true && \
+		mkdir -p /tmp/cicd-trigger/amazon-gamelift-streams && \
+		mkdir -p /tmp/cicd-trigger/amazon-gamelift-streams/config && \
+		mkdir -p /tmp/cicd-trigger/amazon-gamelift-streams/build-utils/infra
+	rm -f /tmp/cicd-trigger.zip && \
+		cp ./makefile /tmp/cicd-trigger/amazon-gamelift-streams/ && \
+		cp makefile.aws /tmp/cicd-trigger/amazon-gamelift-streams/ && \
+		cp makefile.inc /tmp/cicd-trigger/amazon-gamelift-streams/ && \
+		cp ./config/.env /tmp/cicd-trigger/amazon-gamelift-streams/config/ && \
+		cp ./build-utils/infra/aws.strip-dashes.sh /tmp/cicd-trigger/amazon-gamelift-streams/build-utils/infra/
+	cd /tmp/cicd-trigger; zip -r /tmp/cicd-trigger.zip ./
+	aws s3 cp /tmp/cicd-trigger.zip s3://$(s3_bucket) --region ${aws_$(stage)_region} $(aws_cli_profile_arg)
+
+open-website/main:
+	make -f makefile.aws stage=main aws_cli_profile_arg="--profile ${aws_$(stage)_cli_profile}" open-website
+open-website:
+	$(eval cfn_export_key := $(shell ./build-utils/infra/aws.strip-dashes.sh "${aws_cfn_prefix}-$(stage)-${aws_frontend_website_url_cfn_export_name_suffix}-${aws_$(stage)_deploy_id}"))
+	@echo "lookup cfn export: $(cfn_export_key)"
+	$(eval app_url := $(shell aws cloudformation describe-stacks --stack-name "${aws_cfn_prefix}-$(stage)-${aws_frontend_cfn_stack_suffix}-${aws_$(stage)_deploy_id}" $(aws_cli_profile_arg) --region "us-east-1" --query 'Stacks[0].Outputs[?OutputKey==`$(cfn_export_key)`].OutputValue' --output text))
+	@echo "found cfn export app_url: $(app_url)"
+	open -a "Firefox" "https://$(app_url)" --args '--new-window'
+
+update-website/main:
+	make -f makefile.aws stage=main aws_cli_profile_arg="--profile ${aws_$(stage)_cli_profile}" update-website
+update-website:
+# This sample stores some frontend data used by AWS WAF in AWS SSM.
+	$(eval aws_waf_api_key := $(shell aws ssm get-parameter --name "/${aws_cfn_prefix}/$(stage)/aws-waf-api-key/${aws_$(stage)_deploy_id}" --query "Parameter.Value" --output text --region "${aws_$(stage)_region}" $(aws_cli_profile_arg)))
+	@echo "aws_waf_api_key: $(aws_waf_api_key)"
+
+	$(eval aws_waf_captcha_integration_url := $(shell aws wafv2 list-api-keys --scope "CLOUDFRONT" --region "us-east-1" $(aws_cli_profile_arg) | jq -r '.ApplicationIntegrationURL'))
+	@echo "aws_waf_captcha_integration_url: $(aws_waf_captcha_integration_url)"
+
+	make \
+		node_env=$(node_env) \
+		app_location=$(app_location) \
+		target=web \
+		aws_waf_api_key="$(aws_waf_api_key)" \
+		aws_waf_captcha_integration_url="$(aws_waf_captcha_integration_url)" \
+		build/frontend
+
+	make -f makefile.aws stage=$(stage) aws_cli_profile_arg="--profile ${aws_$(stage)_cli_profile}" upload/website
+	make -f makefile.aws stage=$(stage) aws_cli_profile_arg="--profile ${aws_$(stage)_cli_profile}" invalidate-cdn-cache
+
+destroy/main:
+	make -f makefile.aws stage=main aws_cli_profile_arg="--profile ${aws_$(stage)_cli_profile}" destroy
+destroy:
+# The AWS CDK doesn't reliably empty buckets, so we'll need to do that first before deleting resources.
+#
+# Before we do that, disable AWS CloudTrail logging, otherwise accessing buckets will generate more log entries in the buckets.
+# $(eval cfn_export_key := $(shell ./build-utils/infra/aws.strip-dashes.sh "${aws_cfn_prefix}-$(stage)-${aws_frontend_cloudtrail_arn_cfn_export_name_suffix}-${aws_$(stage)_deploy_id}"))
+# @echo "lookup cfn export: $(cfn_export_key)"
+# $(eval cloudtrail_arn := $(shell aws cloudformation describe-stacks --stack-name "${aws_cfn_prefix}-$(stage)-${aws_frontend_cfn_stack_suffix}-${aws_$(stage)_deploy_id}" $(aws_cli_profile_arg) --region "${aws_$(stage)_region}" --query 'Stacks[0].Outputs[?OutputKey==`$(cfn_export_key)`].OutputValue' --output text))
+# @echo "found cfn export cloudtrail_arn: $(cloudtrail_arn)"
+#
+# aws cloudtrail stop-logging --name $(cloudtrail_arn) $(aws_cli_profile_arg) --region "${aws_$(stage)_region}" || echo "stop-logging failed"
+
+# The AWS CDK doesn't reliably empty buckets, so we'll need to do that first before deleting resources.
+	make -f makefile.aws stage="$(stage)" aws_cli_profile_arg="$(aws_cli_profile_arg)" destroy/s3-buckets
+
+# The AWS CDK doesn't empty ECR repos, so we'll need to do that first before deleting resources.
+	make -f makefile.aws stage="$(stage)" aws_cli_profile_arg="$(aws_cli_profile_arg)" destroy/ecr-repos
+
+	make -f makefile.aws delete-cfn-stack stage="$(stage)" region="${aws_$(stage)_region}" aws_cli_profile_arg="$(aws_cli_profile_arg)" cfn_stack_suffix=${aws_cicd_cfn_stack_suffix}
+
+# TODO SSM cleanup. ip, waf api key, also remove integration url waf
+
+#make -f makefile.aws delete-cfn-stack stage="$(stage)" region="us-east-1" aws_cli_profile_arg="$(aws_cli_profile_arg)" cfn_stack_suffix="${aws_frontend_waf_cfn_stack_suffix}"
+	
+# Can't safely delete because GameLift Streams no bucket?
+#make -f makefile.aws cdk_action="$(cdk_action)" stage="$(stage)" app_files_uploaded=true destroy=true deploy/backend
+
+# Can't safely delete distribution because of edge association, need to remove edge association with distribution first.
+# References:
+# * https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/lambda-edge-delete-replicas.html
+# * https://stackoverflow.com/questions/50748523/aws-lambda-unable-to-delete-arn-because-it-is-a-replicated-function
+	make -f makefile.aws cdk_action="$(cdk_action)" stage="$(stage)" app_files_uploaded=true destroy=true deploy/frontend
+
+	make -f makefile.aws delete-cfn-stack stage="$(stage)" region="${aws_$(stage)_region}" aws_cli_profile_arg="$(aws_cli_profile_arg)" cfn_stack_suffix="${aws_backend_cfn_stack_suffix}" cfn_args="--deletion-mode FORCE_DELETE_STACK"
+	make -f makefile.aws delete-cfn-stack stage="$(stage)" region="us-east-1" aws_cli_profile_arg="$(aws_cli_profile_arg)" cfn_stack_suffix="${aws_frontend_cfn_stack_suffix}" cfn_args="--deletion-mode FORCE_DELETE_STACK"
+	make -f makefile.aws delete-cfn-stack stage="$(stage)" region="us-east-1" aws_cli_profile_arg="$(aws_cli_profile_arg)" cfn_stack_suffix="${aws_frontend_waf_cfn_stack_suffix}"
+	make -f makefile.aws delete-cfn-stack stage="$(stage)" region="${aws_$(stage)_region}" aws_cli_profile_arg="$(aws_cli_profile_arg)" cfn_stack_suffix=${aws_cdk_toolkit_cfn_stack_suffix}
+	make -f makefile.aws delete-cfn-stack stage="$(stage)" region="us-east-1" aws_cli_profile_arg="$(aws_cli_profile_arg)" cfn_stack_suffix=${aws_cdk_toolkit_cfn_stack_suffix}
+
+	make -f makefile.aws destroy/logs stage="$(stage)" aws_cli_profile_arg="$(aws_cli_profile_arg)"
+
+destroy/s3-buckets:
+# Created by CICD:
+	./build-utils/infra/aws.try-empty-s3-bucket.sh "${aws_cfn_prefix}" "$(stage)" "${aws_$(stage)_deploy_id}" "${aws_cicd_cfn_stack_suffix}" "${aws_cicd_source_code_bucket_name_cfn_export_name_suffix}" "null" "${aws_$(stage)_region}" "$(aws_cli_profile_arg)" || echo "bucket delete failed"
+
+# Created by frontend:
+	./build-utils/infra/aws.try-empty-s3-bucket.sh "${aws_cfn_prefix}" "$(stage)" "${aws_$(stage)_deploy_id}" "${aws_frontend_cfn_stack_suffix}" "${aws_frontend_website_bucket_name_cfn_export_name_suffix}" "null" "us-east-1" "$(aws_cli_profile_arg)" || echo "bucket delete failed"
+	./build-utils/infra/aws.try-empty-s3-bucket.sh "${aws_cfn_prefix}" "$(stage)" "${aws_$(stage)_deploy_id}" "${aws_frontend_cfn_stack_suffix}" "${aws_frontend_cloudfront_access_logs_bucket_name_cfn_export_name_suffix}" "null" "us-east-1" "$(aws_cli_profile_arg)" || echo "bucket delete failed"
+
+# Created by backend:
+	./build-utils/infra/aws.try-empty-s3-bucket.sh "${aws_cfn_prefix}" "$(stage)" "${aws_$(stage)_deploy_id}" "${aws_backend_cfn_stack_suffix}" "${aws_backend_app_access_logs_bucket_name_cfn_export_name_suffix}" "null" "${aws_$(stage)_region}" "$(aws_cli_profile_arg)" || echo "bucket delete failed"
+
+# Created by AWS CDK:
+	./build-utils/infra/aws.try-empty-s3-bucket.sh "${aws_cfn_prefix}" "$(stage)" "${aws_$(stage)_deploy_id}" "${aws_cdk_toolkit_cfn_stack_suffix}" "BucketName" "true" "${aws_$(stage)_region}" "$(aws_cli_profile_arg)" || echo "bucket delete failed"
+	./build-utils/infra/aws.try-empty-s3-bucket.sh "${aws_cfn_prefix}" "$(stage)" "${aws_$(stage)_deploy_id}" "${aws_cdk_toolkit_cfn_stack_suffix}" "BucketName" "true" "us-east-1" "$(aws_cli_profile_arg)" || echo "bucket delete failed"
+
+destroy/ecr-repos:
+# Created by AWS CDK:
+	./build-utils/infra/aws.try-empty-ecr-repo.sh "${aws_cfn_prefix}" "$(stage)" "${aws_$(stage)_deploy_id}" "${aws_cdk_toolkit_cfn_stack_suffix}" "ImageRepositoryName" "true" "${aws_$(stage)_region}" "$(aws_cli_profile_arg)" || echo "repo delete failed"
+	./build-utils/infra/aws.try-empty-ecr-repo.sh "${aws_cfn_prefix}" "$(stage)" "${aws_$(stage)_deploy_id}" "${aws_cdk_toolkit_cfn_stack_suffix}" "ImageRepositoryName" "true" "us-east-1" "$(aws_cli_profile_arg)" || echo "repo delete failed"
+
+delete-cfn-stack:
+	./build-utils/infra/aws.try-delete-cfn-stack.sh "${aws_cfn_prefix}" "$(stage)" "$(cfn_stack_suffix)" "${aws_$(stage)_deploy_id}" "$(region)" "$(aws_cli_profile_arg)" "$(optional_unique_suffix)" $(cfn_args)
+
+# FIXME Doesn't delete all log groups.
+destroy/logs:
+	./build-utils/infra/aws.try-delete-logs.sh "${aws_cfn_prefix}" "$(stage)" "${aws_$(stage)_deploy_id}" "${aws_$(stage)_region}" "$(aws_cli_profile_arg)" || echo "delete logs failed"
+	./build-utils/infra/aws.try-delete-logs.sh "${aws_cfn_prefix}" "$(stage)" "${aws_$(stage)_deploy_id}" "us-east-1" "$(aws_cli_profile_arg)" || echo "delete logs failed"
+
+clean/infra:
+	rm -f ./cdk.context.json
+	rm -f ./src/infra.aws/cdk.context.json
+	rm -rf ./cdk.out
+	rm -rf ./src/infra.aws/cdk.out

@@ -1,0 +1,23 @@
+/* @license
+*  Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+*  SPDX-License-Identifier: MIT-0
+*/
+:root {
+  --background-color: white;
+}
+
+html {
+  scroll-padding-top: 10rem;
+}
+
+a {
+  color: var(--link-color); 
+}
+a:current {
+  text-decoration: underline;
+}
+
+.container {
+  margin: 0 auto;
+  width: 90%;
+}

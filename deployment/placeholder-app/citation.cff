@@ -1,0 +1,25 @@
+# This file is responsible for citing referenced work and/or software used that is not a cargo package declared in the dependencies file.
+# Not all of the software below is an application dependency, it's just relied upon to build, develop, or deploy the sample.
+# References:
+# * https://citation-file-format.github.io/
+# * https://github.com/citation-file-format/citation-file-format/blob/main/schema-guide.md#referencing-other-work
+# * https://github.com/citation-file-format/citation-file-format/blob/main/schema-guide.md#definitionsreferencetype
+# * https://github.com/citation-file-format/citation-file-format/blob/main/schema-guide.md#definitionsreferenceurl
+# * https://spdx.org/licenses/
+cff-version: 1.2.0
+title: "placeholder-app"
+message: "When I wrote this code, only God and I understood what I did. Now only God knows."
+references:
+  # Dev software:
+  - type: software
+    title: "GNU Make"
+    license: GPL-3.0-only
+    url: "https://www.gnu.org/software/make"
+  - type: software
+    title: "Rust et. al."
+    license: MIT
+    url: "https://www.rust-lang.org/policies/licenses" 
+  - type: software
+    title: "Rust three-d pbr sample"
+    license: MIT
+    url: "https://github.com/asny/three-d/blob/master/examples/pbr"

@@ -1,0 +1,28 @@
+<!--
+@license
+Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+SPDX-License-Identifier: MIT-0
+-->
+<footer class='footer'></footer>
+<% if (app_location === 'aws') { %>
+  <script type='text/javascript' src='<%= aws_waf_captcha_integration_url %>jsapi.js' defer></script>
+<% } %>
+
+<% if (app_location === 'local') { %>
+  <script src='http://localhost:35729/livereload.js?snipver=1' defer></script>
+<% } %>
+
+<%- scripts_with_csp_hashes %>
+
+<% if (app_location === 'local') { %>
+<script>
+  // FIXME. See: https://stackoverflow.com/questions/61964265/getting-error-this-document-requires-trustedhtml-assignment-in-chrome
+  if (window.trustedTypes && window.trustedTypes.createPolicy && !window.trustedTypes.defaultPolicy) {
+    window.trustedTypes.createPolicy('default', {
+      createHTML: string => string,
+      createScriptURL: string => string,
+      createScript: string => string, 
+    });
+  }
+</script>
+<% } %>

@@ -1,0 +1,65 @@
+body {
+    font-family: sans-serif;
+    margin: 1em;
+}
+
+h1 {
+    background-color: #027;
+    color: white;
+    padding: .25em 1em;
+    margin-left: -1em;
+    margin-right: -1em;
+}
+
+#cmdLineJsonInfo, #envVarsJsonInfo {
+    font-size: 11pt;
+}
+
+#setupArgs, #setupEnv {
+    overflow: scroll;
+}
+
+#setupClickToStart > button, #reconnectClickToReconnect > button {
+    margin-top: 1em;
+    background-color: #070;
+    color: white;
+    padding: .25em 1em;
+    font-size: 150%;
+}
+
+#setupValidationError {
+    margin-top: 1em;
+    font-weight: bold;
+    color: darkred;
+}
+
+#appError h1, #appReconnectionError h1 {
+    background-color: #500;
+}
+
+#appDisconnected h1 {
+    background-color: #333;
+}
+
+#appStreaming h1 {
+    background-color: #266;
+    margin-bottom: 0;
+}
+
+#streamControls {
+    margin: .25em 0;
+}
+
+#streamVideoElement {
+    max-width: 100%;
+}
+
+#appConnecting h1 {
+    background-color: #456;
+    animation: connectingColorPulse 1s linear alternate-reverse infinite;
+}
+@keyframes connectingColorPulse {
+    to {
+        background-color: #058;
+    }
+}
