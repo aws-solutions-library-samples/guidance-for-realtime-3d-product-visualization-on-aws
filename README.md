@@ -259,7 +259,7 @@ make -f makefile.aws deploy/main
 
 **Issue: Browser Compatibility**
 
-The streaming functionality requires modern browser support for WebRTC and ES6 modules.
+The streaming functionality requires modern browser support for WebRTC and ES6 modules. Firefox web browser recommended.
 
 ### Additional Considerations
 
