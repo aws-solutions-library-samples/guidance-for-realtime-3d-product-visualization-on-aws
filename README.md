@@ -103,14 +103,7 @@ These deployment instructions are optimized to best work on **macOS or Linux**. 
 
 ### AWS account requirements
 
-1. **Active AWS Account** with appropriate permissions to create and manage:
-   - Amazon GameLift Streams resources
-   - Amazon CloudFront distributions
-   - Amazon S3 buckets
-   - AWS Lambda functions
-   - AWS WAF Web ACLs
-   - AWS CodePipeline and CodeBuild projects
-   - IAM roles and policies
+1. **Active AWS Account** with appropriate permissions to create and manage: Amazon GameLift Streams resources, Amazon CloudFront distributions, Amazon S3 buckets, AWS Lambda functions, AWS WAF Web ACLs, AWS CodePipeline and CodeBuild projects and IAM roles and policies.
 
 2. **AWS CLI Configuration**: Configure AWS CLI with credentials that have administrative access (or equivalent permissions)
    ```bash
@@ -128,10 +121,7 @@ The bootstrap process is automated as part of the deployment steps below. The Gu
 
 ### Service limits
 
-**Amazon GameLift Streams**: Default quotas may limit the number of concurrent streaming sessions. You may need to request quota increases for:
-   - Maximum concurrent streams per stream group
-   - Maximum applications per account
-   - Maximum stream groups per account
+**Amazon GameLift Streams**: Default quotas may limit the number of concurrent streaming sessions. You may need to request quota increases for: maximum concurrent streams per stream group, maximum applications per account and maximum stream groups per account.
    
    To request quota increases, visit the [Service Quotas console](https://console.aws.amazon.com/servicequotas/) and search for "GameLift Streams".
 
@@ -240,11 +230,7 @@ Replace the placeholder Rust application with your own 3D product visualization:
    make -f makefile.aws start/cicd/main
    ```
    
-   The CI/CD pipeline will:
-   - Build your application Docker container in AWS CodeBuild
-   - Compile your application binary inside the container
-   - Upload the binary to Amazon S3
-   - Deploy it to Amazon GameLift Streams
+   The CI/CD pipeline will: build your application Docker container in AWS CodeBuild, compile your application binary inside the container, upload the binary to Amazon S3 and deploy it to Amazon GameLift Streams.
 
 **Note**: The application is built automatically in the AWS CodeBuild environment during the CI/CD process. You don't need to build it locally unless you want to test it first. The CodeBuild environment has Docker support and will execute the Docker-based build process defined in your makefile.
 
@@ -275,12 +261,6 @@ make -f makefile.aws deploy/main
 
 The streaming functionality requires modern browser support for WebRTC and ES6 modules.
 
-**Resolution**: Use a supported browser version:
-- Chrome 60+
-- Firefox 60+
-- Safari 11+
-- Edge 18+
-
 ### Additional Considerations
 
 **Cost Management**
@@ -288,21 +268,11 @@ The streaming functionality requires modern browser support for WebRTC and ES6 m
 - Amazon GameLift Streams charges per streaming hour. Inactive sessions should be terminated promptly.
 - Consider implementing session time limits and automatic termination.
 
-**Security Considerations**
-
-- This Guidance creates public endpoints protected by AWS WAF.
-- The default configuration restricts access to a single IP address.
-- For production use, implement proper authentication and authorization.
-
 **Performance Considerations**
 
 - Streaming quality depends on end-user network bandwidth and latency.
 - Amazon GameLift Streams instance types should match your application's rendering requirements.
 - Consider geographic proximity between users and deployed regions.
-
-### Feedback
-
-For any feedback, questions, or suggestions, please use the issues tab in this repository.
 
 ### License
 
@@ -311,7 +281,6 @@ This source is licensed under the MIT-0 License. See the [LICENSE](./LICENSE) fi
 ## Notices 
 
 *Customers are responsible for making their own independent assessment of the information in this Guidance. This Guidance: (a) is for informational purposes only, (b) represents AWS current product offerings and practices, which are subject to change without notice, and (c) does not create any commitments or assurances from AWS and its affiliates, suppliers or licensors. AWS products or services are provided “as is” without warranties, representations, or conditions of any kind, whether express or implied. AWS responsibilities and liabilities to its customers are controlled by AWS agreements, and this Guidance is not part of, nor does it modify, any agreement between AWS and its customers.*
-
 
 ## Authors
 - [Evan Helda](https://www.linkedin.com/in/evanhelda/), Principal Spatial compute GTM
