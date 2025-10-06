@@ -24,11 +24,22 @@ ifneq (,$(wildcard ./config/.env))
 endif
 
 # Trim spaces and comments from env variables
+override aws_main_cli_profile := $(strip $(firstword $(subst \#, ,$(aws_main_cli_profile))))
+override aws_main_account_id := $(strip $(firstword $(subst \#, ,$(aws_main_account_id))))
+override aws_main_region := $(strip $(firstword $(subst \#, ,$(aws_main_region))))
 override aws_main_deploy_id := $(strip $(firstword $(subst \#, ,$(aws_main_deploy_id))))
 override aws_main_cdk_qualifier := $(strip $(firstword $(subst \#, ,$(aws_main_cdk_qualifier))))
 override aws_cfn_prefix := $(strip $(firstword $(subst \#, ,$(aws_cfn_prefix))))
+override aws_local_cli_profile := $(strip $(firstword $(subst \#, ,$(aws_local_cli_profile))))
+override aws_local_account_id := $(strip $(firstword $(subst \#, ,$(aws_local_account_id))))
+override aws_local_region := $(strip $(firstword $(subst \#, ,$(aws_local_region))))
+override aws_local_deploy_id := $(strip $(firstword $(subst \#, ,$(aws_local_deploy_id))))
+override aws_cdk_qualifier := $(strip $(firstword $(subst \#, ,$(aws_cdk_qualifier))))
+override aws_local_gls_stream_group_id := $(strip $(firstword $(subst \#, ,$(aws_local_gls_stream_group_id))))
+override aws_local_gls_application_id := $(strip $(firstword $(subst \#, ,$(aws_local_gls_application_id))))
 override aws_cdk_toolkit_cfn_stack_suffix := $(strip $(firstword $(subst \#, ,$(aws_cdk_toolkit_cfn_stack_suffix))))
 override aws_cicd_cfn_stack_suffix := $(strip $(firstword $(subst \#, ,$(aws_cicd_cfn_stack_suffix))))
+
 
 
 # See ./config/.env file for AWS stage configuration.
