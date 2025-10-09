@@ -17,7 +17,7 @@ const deployId = cdkContext.getValidContext(app, 'deploy-id')!;
 const destroy = cdkContext.getValidContext(app, 'destroy')! === 'true';
 const appFilesUploaded = cdkContext.getValidContext(app, 'app-files-uploaded')! === 'true';
 
-const stage = new AppStage(app, 'stage', { name: stageName, deployId, cdkAction, description: "Guidance for 3D product visualization (SO9157)" });
+const stage = new AppStage(app, 'stage', { name: stageName, deployId, cdkAction, description: "Guidance for 3D product visualization (SO9641)" });
 
 new ThreeDProductVisualizationGameLiftStreamsBackendStack(app, stage.getResourceName({ resourceName: stage.getConfig().backendCfnStackSuffis }), { stage, appFilesUploaded, destroy });
 

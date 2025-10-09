@@ -19,7 +19,7 @@ const restrictToPublicIp = cdkContext.getValidContext(app, 'restrict-to-public-i
 // Taken from somewhere: WAF is available globally for Amazon CloudFront distributions, 
 //  but you must use the Region US East (N. Virginia) to create your web ACL and 
 //  any resources used in the web ACL, such as rule groups, IP sets, and regex pattern sets.
-const stage = new AppStage(app, 'stage', { name: stageName, deployId, cdkAction, region: 'us-east-1', description: "Guidance for 3D product visualization - WAF Stack (SO9157)" });
+const stage = new AppStage(app, 'stage', { name: stageName, deployId, cdkAction, region: 'us-east-1', description: "Guidance for 3D product visualization - WAF Stack (SO9641)" });
 
 new ThreeDProductVisualizationGameLiftStreamsFrontendWAFStack(app, stage.getResourceName({ resourceName: stage.getConfig().frontendWafCfnStackSuffix }), { stage, restrictToPublicIp });
 

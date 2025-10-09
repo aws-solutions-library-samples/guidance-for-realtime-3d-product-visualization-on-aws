@@ -24,7 +24,7 @@ const glsApplicationId = cdkContext.getValidContext(app, 'gls-application-id');
 // Since those resources are deployed as frontend request middleware, this AWS CloudFormation stack
 //  must also be deployed in this region.
 // You could alternatively manage the AWS Lambda@edge functions in a separate stack.
-const stage = new AppStage(app, 'stage', { name: stageName, deployId, cdkAction, region: 'us-east-1', description: "Guidance for 3D product visualization - Frontend Stack (SO9157)" });
+const stage = new AppStage(app, 'stage', { name: stageName, deployId, cdkAction, region: 'us-east-1', description: "Guidance for 3D product visualization - Frontend Stack (SO9641)" });
 
 new ThreeDProductVisualizationGameLiftStreamsFrontendStack(app, stage.getResourceName({ resourceName: stage.getConfig().frontendCfnStackSuffix }), { stage, appFilesUploaded, edgeDistDir, glsStreamGroupId, glsApplicationId, destroy });
 

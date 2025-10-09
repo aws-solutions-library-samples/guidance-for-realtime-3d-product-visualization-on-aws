@@ -20,7 +20,7 @@ const appBucketName = cdkContext.getValidContext(app, 'app-bucket-name');
 const appURL = cdkContext.getValidContext(app, 'app-url');
 const distributionId = cdkContext.getValidContext(app, 'distribution-id');
 
-const stage = new AppStage(app, 'stage', { name: stageName, deployId, cdkAction, description: "Guidance for 3D product visualization - CI/CD Stack (SO9157)" });
+const stage = new AppStage(app, 'stage', { name: stageName, deployId, cdkAction, description: "Guidance for 3D product visualization - CI/CD Stack (SO9641)" });
 
 new ThreeDProductVisualizationGameLiftStreamsCICDStack(app, stage.getResourceName({ resourceName: stage.getConfig().cicdCfnStackSuffix }), { 
   stage, 
